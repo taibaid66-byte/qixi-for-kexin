@@ -108,6 +108,7 @@
     }
 
     .date-chip {
+      align-self: flex-start;
       display: inline-flex;
       align-items: center;
       gap: 9px;
@@ -692,7 +693,7 @@
 
     .toast {
       position: fixed;
-      z-index: 30;
+      z-index: 70;
       left: 50%;
       bottom: calc(26px + env(safe-area-inset-bottom));
       max-width: calc(100vw - 40px);
@@ -720,6 +721,67 @@
       filter: drop-shadow(0 2px 5px rgba(236,62,120,.38));
     }
 
+    .music-control {
+      position: fixed;
+      z-index: 25;
+      top: max(16px, env(safe-area-inset-top));
+      right: 16px;
+      min-height: 38px;
+      padding: 0 13px 0 11px;
+      border: 1px solid rgba(255, 232, 179, .28);
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: rgba(255,255,255,.74);
+      background: rgba(10, 15, 42, .55);
+      box-shadow: 0 8px 24px rgba(0,0,0,.18);
+      -webkit-backdrop-filter: blur(14px);
+      backdrop-filter: blur(14px);
+      font-size: 11px;
+      letter-spacing: .08em;
+      cursor: pointer;
+    }
+
+    .music-bars {
+      width: 17px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+    }
+
+    .music-bars i {
+      width: 2px;
+      height: 5px;
+      border-radius: 3px;
+      background: var(--gold);
+      transform-origin: center;
+    }
+
+    .music-control.playing {
+      color: #fff3d5;
+      border-color: rgba(255, 217, 138, .48);
+    }
+
+    .music-control.playing .music-bars i { animation: music-wave .9s ease-in-out infinite; }
+    .music-control.playing .music-bars i:nth-child(2) { animation-delay: -.35s; }
+    .music-control.playing .music-bars i:nth-child(3) { animation-delay: -.6s; }
+
+    .love-canvas {
+      position: fixed;
+      z-index: 60;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s ease;
+    }
+
+    .love-canvas.active { opacity: 1; }
+
     @keyframes twinkle { to { opacity: .9; } }
     @keyframes heartbeat { 0%, 100% { transform: scale(1); } 10% { transform: scale(1.08); } 20% { transform: scale(1); } 30% { transform: scale(1.05); } }
     @keyframes pulse-ring { 0% { transform: scale(.68); opacity: .75; } 100% { transform: scale(1.4); opacity: 0; } }
@@ -728,6 +790,10 @@
       0% { transform: translate(-50%, -50%) scale(.6) rotate(0); opacity: 0; }
       18% { opacity: 1; }
       100% { transform: translate(calc(-50% + var(--drift)), -190px) scale(1.35) rotate(var(--turn)); opacity: 0; }
+    }
+    @keyframes music-wave {
+      0%, 100% { height: 4px; opacity: .55; }
+      50% { height: 15px; opacity: 1; }
     }
     @keyframes card-in {
       from { opacity: 0; transform: translateX(20px) scale(.98); }
@@ -738,6 +804,7 @@
       .page { width: min(100%, 520px); margin: 0 auto; box-shadow: 0 0 100px rgba(0,0,0,.25); }
       .letter-section, .qa-section { width: min(100%, 520px); margin: 0 auto; }
       .moon { right: -4px; }
+      .music-control { right: max(16px, calc((100vw - 520px) / 2 + 16px)); }
     }
 
     @media (max-height: 700px) {
@@ -755,6 +822,11 @@
 </head>
 
 <body>
+  <button class="music-control" id="musicControl" type="button" aria-pressed="false" aria-label="开启背景音乐">
+    <span class="music-bars" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span id="musicLabel">开启音乐</span>
+  </button>
+
   <main>
     <section class="page" aria-labelledby="love-title">
       <div class="stars" aria-hidden="true"></div>
@@ -882,6 +954,7 @@
     </section>
   </main>
 
+  <canvas class="love-canvas" id="loveCanvas" aria-hidden="true"></canvas>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script>
@@ -891,6 +964,10 @@
     const acceptButton = document.querySelector('#acceptButton');
     const shareButton = document.querySelector('#shareButton');
     const toast = document.querySelector('#toast');
+    const musicControl = document.querySelector('#musicControl');
+    const musicLabel = document.querySelector('#musicLabel');
+    const loveCanvas = document.querySelector('#loveCanvas');
+    const loveContext = loveCanvas.getContext('2d');
     const qaCards = [...document.querySelectorAll('.qa-card[data-question]')];
     const qaResult = document.querySelector('#qaResult');
     const qaStep = document.querySelector('#qaStep');
@@ -899,6 +976,291 @@
     const restartQa = document.querySelector('#restartQa');
     const qaAnswers = [];
     let toastTimer;
+    let audioContext;
+    let masterBus;
+    let musicBus;
+    let effectsBus;
+    let musicTimer;
+    let musicPlaying = false;
+    let musicStep = 0;
+    let nextMusicTime = 0;
+    let celebrationFrame;
+    let celebrationParticles = [];
+    let canvasRatio = 1;
+
+    const warmChords = [
+      [130.81, 164.81, 196.00, 246.94],
+      [110.00, 130.81, 164.81, 196.00],
+      [87.31, 110.00, 130.81, 164.81],
+      [98.00, 123.47, 146.83, 196.00]
+    ];
+    const warmMelody = [659.25, 587.33, 523.25, 587.33, 659.25, 783.99, 659.25, null,
+      587.33, 523.25, 493.88, 523.25, 587.33, 659.25, 523.25, null];
+
+    function setupAudio() {
+      if (audioContext) {
+        if (audioContext.state === 'suspended') audioContext.resume();
+        return audioContext;
+      }
+
+      const AudioEngine = window.AudioContext || window.webkitAudioContext;
+      if (!AudioEngine) return null;
+
+      audioContext = new AudioEngine();
+      masterBus = audioContext.createGain();
+      masterBus.gain.value = .72;
+
+      const compressor = audioContext.createDynamicsCompressor();
+      compressor.threshold.value = -20;
+      compressor.knee.value = 18;
+      compressor.ratio.value = 5;
+      compressor.attack.value = .01;
+      compressor.release.value = .3;
+      masterBus.connect(compressor).connect(audioContext.destination);
+
+      musicBus = audioContext.createGain();
+      musicBus.gain.value = 0;
+      musicBus.connect(masterBus);
+
+      effectsBus = audioContext.createGain();
+      effectsBus.gain.value = .9;
+      effectsBus.connect(masterBus);
+
+      const reverb = audioContext.createConvolver();
+      const wetBus = audioContext.createGain();
+      const impulseLength = Math.floor(audioContext.sampleRate * 1.8);
+      const impulse = audioContext.createBuffer(2, impulseLength, audioContext.sampleRate);
+
+      for (let channel = 0; channel < impulse.numberOfChannels; channel++) {
+        const data = impulse.getChannelData(channel);
+        for (let i = 0; i < impulseLength; i++) {
+          data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / impulseLength, 2.7);
+        }
+      }
+
+      reverb.buffer = impulse;
+      wetBus.gain.value = .16;
+      musicBus.connect(reverb).connect(wetBus).connect(masterBus);
+      return audioContext;
+    }
+
+    function softTone(frequency, when, duration, volume, type = 'sine', destination = musicBus) {
+      if (!audioContext || !destination) return;
+      const oscillator = audioContext.createOscillator();
+      const filter = audioContext.createBiquadFilter();
+      const gain = audioContext.createGain();
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(frequency, when);
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(type === 'triangle' ? 1800 : 2400, when);
+      gain.gain.setValueAtTime(.0001, when);
+      gain.gain.exponentialRampToValueAtTime(Math.max(.0002, volume), when + Math.min(.35, duration * .28));
+      gain.gain.exponentialRampToValueAtTime(.0001, when + duration);
+      oscillator.connect(filter).connect(gain).connect(destination);
+      oscillator.start(when);
+      oscillator.stop(when + duration + .05);
+    }
+
+    function scheduleWarmMusic() {
+      if (!musicPlaying || !audioContext) return;
+      const beat = 60 / 72;
+
+      while (nextMusicTime < audioContext.currentTime + .8) {
+        const chordIndex = Math.floor(musicStep / 4) % warmChords.length;
+        const chord = warmChords[chordIndex];
+
+        if (musicStep % 4 === 0) {
+          chord.forEach((frequency, index) => {
+            softTone(frequency, nextMusicTime + index * .035, beat * 4.45, .012, 'sine');
+          });
+        }
+
+        const arpeggio = chord[musicStep % chord.length] * 2;
+        softTone(arpeggio, nextMusicTime, beat * .72, .017, 'triangle');
+
+        const melodyNote = warmMelody[musicStep % warmMelody.length];
+        if (melodyNote) softTone(melodyNote, nextMusicTime + .08, beat * .82, .023, 'sine');
+
+        nextMusicTime += beat;
+        musicStep++;
+      }
+    }
+
+    function updateMusicControl() {
+      musicControl.classList.toggle('playing', musicPlaying);
+      musicControl.setAttribute('aria-pressed', String(musicPlaying));
+      musicControl.setAttribute('aria-label', musicPlaying ? '暂停背景音乐' : '开启背景音乐');
+      musicLabel.textContent = musicPlaying ? '音乐播放中' : '开启音乐';
+    }
+
+    function startMusic() {
+      const engine = setupAudio();
+      if (!engine || musicPlaying) return;
+      musicPlaying = true;
+      musicStep = 0;
+      nextMusicTime = engine.currentTime + .05;
+      musicBus.gain.cancelScheduledValues(engine.currentTime);
+      musicBus.gain.setValueAtTime(musicBus.gain.value, engine.currentTime);
+      musicBus.gain.linearRampToValueAtTime(.78, engine.currentTime + .8);
+      scheduleWarmMusic();
+      musicTimer = setInterval(scheduleWarmMusic, 240);
+      updateMusicControl();
+    }
+
+    function pauseMusic() {
+      if (!audioContext || !musicPlaying) return;
+      musicPlaying = false;
+      clearInterval(musicTimer);
+      musicBus.gain.cancelScheduledValues(audioContext.currentTime);
+      musicBus.gain.setTargetAtTime(0, audioContext.currentTime, .16);
+      updateMusicControl();
+    }
+
+    function playTap() {
+      const engine = setupAudio();
+      if (!engine) return;
+      const now = engine.currentTime;
+      const oscillator = engine.createOscillator();
+      const gain = engine.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(520, now);
+      oscillator.frequency.exponentialRampToValueAtTime(760, now + .075);
+      gain.gain.setValueAtTime(.035, now);
+      gain.gain.exponentialRampToValueAtTime(.0001, now + .11);
+      oscillator.connect(gain).connect(effectsBus);
+      oscillator.start(now);
+      oscillator.stop(now + .12);
+    }
+
+    function playSparkle(notes = [659.25, 783.99, 987.77]) {
+      const engine = setupAudio();
+      if (!engine) return;
+      notes.forEach((note, index) => {
+        softTone(note, engine.currentTime + index * .075, .48, .065, 'sine', effectsBus);
+      });
+    }
+
+    function resizeLoveCanvas() {
+      canvasRatio = Math.min(window.devicePixelRatio || 1, 2);
+      loveCanvas.width = Math.floor(window.innerWidth * canvasRatio);
+      loveCanvas.height = Math.floor(window.innerHeight * canvasRatio);
+    }
+
+    function drawCanvasHeart(context, particle) {
+      const size = particle.size;
+      context.save();
+      context.translate(particle.x, particle.y);
+      context.rotate(particle.rotation);
+      context.scale(1, .94);
+      context.beginPath();
+      context.moveTo(0, size * .3);
+      context.bezierCurveTo(-size * 1.05, -size * .34, -size * .54, -size, 0, -size * .44);
+      context.bezierCurveTo(size * .54, -size, size * 1.05, -size * .34, 0, size * .3);
+      context.fillStyle = particle.color;
+      context.shadowColor = particle.color;
+      context.shadowBlur = particle.size * .55;
+      context.fill();
+      context.restore();
+    }
+
+    function animateLoveCelebration() {
+      loveContext.setTransform(1, 0, 0, 1, 0, 0);
+      loveContext.clearRect(0, 0, loveCanvas.width, loveCanvas.height);
+      loveContext.setTransform(canvasRatio, 0, 0, canvasRatio, 0, 0);
+
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const firstParticle = celebrationParticles[0];
+      const celebrationAge = firstParticle ? firstParticle.sceneAge : 999;
+
+      if (celebrationAge < 18) {
+        loveContext.fillStyle = `rgba(255, 133, 176, ${.12 * (1 - celebrationAge / 18)})`;
+        loveContext.fillRect(0, 0, width, height);
+      }
+
+      celebrationParticles = celebrationParticles.filter(particle => {
+        particle.age++;
+        particle.sceneAge++;
+        if (particle.age >= particle.life) return false;
+
+        particle.x += particle.vx;
+        particle.y += particle.vy;
+        particle.vx *= .987;
+        particle.vy = particle.vy * .987 + particle.gravity;
+        particle.rotation += particle.spin;
+        const fade = Math.min(1, (particle.life - particle.age) / 35);
+        loveContext.globalAlpha = fade;
+
+        if (particle.kind === 'heart') {
+          drawCanvasHeart(loveContext, particle);
+        } else {
+          loveContext.fillStyle = particle.color;
+          loveContext.beginPath();
+          loveContext.arc(particle.x, particle.y, particle.size * .22, 0, Math.PI * 2);
+          loveContext.fill();
+        }
+        return true;
+      });
+
+      loveContext.globalAlpha = 1;
+
+      if (celebrationParticles.length) {
+        celebrationFrame = requestAnimationFrame(animateLoveCelebration);
+      } else {
+        loveCanvas.classList.remove('active');
+      }
+    }
+
+    function launchLoveCelebration() {
+      cancelAnimationFrame(celebrationFrame);
+      resizeLoveCanvas();
+      celebrationParticles = [];
+      loveCanvas.classList.add('active');
+
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const centerX = width / 2;
+      const centerY = height * .54;
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      const particleCount = reduceMotion ? 55 : 150;
+      const colors = ['#ff4f8b', '#ff7eac', '#ffb4cd', '#ffd5e2', '#ffd878', '#fff2cb'];
+
+      for (let i = 0; i < particleCount; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 3.5 + Math.random() * (reduceMotion ? 4.5 : 10.5);
+        celebrationParticles.push({
+          x: centerX + (Math.random() - .5) * 24,
+          y: centerY + (Math.random() - .5) * 24,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - 1.3,
+          gravity: .035 + Math.random() * .045,
+          size: 7 + Math.random() * 16,
+          rotation: Math.random() * Math.PI * 2,
+          spin: (Math.random() - .5) * .12,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          kind: Math.random() > .14 ? 'heart' : 'sparkle',
+          age: 0,
+          sceneAge: 0,
+          life: 130 + Math.random() * 85
+        });
+      }
+
+      playSparkle([523.25, 659.25, 783.99, 1046.50]);
+      animateLoveCelebration();
+    }
+
+    musicControl.addEventListener('click', () => {
+      setupAudio();
+      playTap();
+      if (musicPlaying) pauseMusic(); else startMusic();
+    });
+
+    document.addEventListener('click', event => {
+      const isMusicControl = event.target.closest && event.target.closest('#musicControl');
+      if (isMusicControl) return;
+      if (!musicPlaying) startMusic();
+      playTap();
+    });
 
     function showToast(message) {
       toast.textContent = message;
@@ -929,6 +1291,7 @@
 
     heartButton.addEventListener('click', () => {
       heartBurst(heartButton, 14);
+      playSparkle();
       showToast('心意已点亮：陈可欣，我喜欢你！');
     });
 
@@ -947,11 +1310,13 @@
     openLetter.addEventListener('click', () => {
       revealLetter();
       heartBurst(openLetter, 9);
+      playSparkle([523.25, 659.25, 783.99]);
     });
 
     acceptButton.addEventListener('click', () => {
       if (!envelope.classList.contains('open')) revealLetter();
       heartBurst(acceptButton, 18);
+      playSparkle([659.25, 783.99, 1046.50]);
       showToast('你收下的这一刻，星河都亮了 ✨');
     });
 
@@ -965,6 +1330,7 @@
           choice.classList.add('selected');
           qaAnswers[questionIndex] = choice.dataset.answer;
           qaProgress.style.width = ((questionIndex + 1) / qaCards.length * 100) + '%';
+          playSparkle([523.25 + questionIndex * 64, 659.25 + questionIndex * 62]);
 
           setTimeout(() => {
             card.classList.remove('active');
@@ -977,7 +1343,7 @@
               qaResult.classList.add('active');
               qaStep.textContent = '心意已送达';
               answerSummary.textContent = '你选择了：\n♡ ' + qaAnswers.join('\n♡ ');
-              heartBurst(qaResult.querySelector('.result-heart'), 16);
+              launchLoveCelebration();
             }
           }, 430);
         });
