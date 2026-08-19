@@ -988,14 +988,26 @@
     let celebrationParticles = [];
     let canvasRatio = 1;
 
-    const warmChords = [
-      [130.81, 164.81, 196.00, 246.94],
+    const brightChords = [
+      [130.81, 164.81, 196.00, 261.63],
+      [123.47, 146.83, 196.00, 246.94],
       [110.00, 130.81, 164.81, 196.00],
-      [87.31, 110.00, 130.81, 164.81],
+      [98.00, 123.47, 164.81, 196.00],
+      [87.31, 130.81, 164.81, 220.00],
+      [82.41, 98.00, 130.81, 164.81],
+      [73.42, 87.31, 110.00, 130.81],
       [98.00, 123.47, 146.83, 196.00]
     ];
-    const warmMelody = [659.25, 587.33, 523.25, 587.33, 659.25, 783.99, 659.25, null,
-      587.33, 523.25, 493.88, 523.25, 587.33, 659.25, 523.25, null];
+    const brightMelody = [
+      659.25, null, 783.99, 880.00, 783.99, null,
+      493.88, null, 587.33, 783.99, 880.00, 783.99,
+      440.00, null, 523.25, 659.25, 783.99, 659.25,
+      392.00, null, 523.25, 659.25, 783.99, 659.25,
+      698.46, null, 880.00, 783.99, 659.25, null,
+      659.25, 783.99, 1046.50, 987.77, 880.00, 783.99,
+      587.33, null, 698.46, 659.25, 587.33, 523.25,
+      587.33, 783.99, 987.77, 880.00, 783.99, null
+    ];
 
     function setupAudio() {
       if (audioContext) {
@@ -1028,18 +1040,18 @@
 
       const reverb = audioContext.createConvolver();
       const wetBus = audioContext.createGain();
-      const impulseLength = Math.floor(audioContext.sampleRate * 1.8);
+      const impulseLength = Math.floor(audioContext.sampleRate * 1.25);
       const impulse = audioContext.createBuffer(2, impulseLength, audioContext.sampleRate);
 
       for (let channel = 0; channel < impulse.numberOfChannels; channel++) {
         const data = impulse.getChannelData(channel);
         for (let i = 0; i < impulseLength; i++) {
-          data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / impulseLength, 2.7);
+          data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / impulseLength, 3.2);
         }
       }
 
       reverb.buffer = impulse;
-      wetBus.gain.value = .16;
+      wetBus.gain.value = .12;
       musicBus.connect(reverb).connect(wetBus).connect(masterBus);
       return audioContext;
     }
@@ -1061,27 +1073,62 @@
       oscillator.stop(when + duration + .05);
     }
 
+    function pluckTone(frequency, when, duration, volume) {
+      if (!audioContext || !musicBus) return;
+      const body = audioContext.createOscillator();
+      const shimmer = audioContext.createOscillator();
+      const shimmerLevel = audioContext.createGain();
+      const filter = audioContext.createBiquadFilter();
+      const gain = audioContext.createGain();
+
+      body.type = 'triangle';
+      body.frequency.setValueAtTime(frequency, when);
+      shimmer.type = 'sine';
+      shimmer.frequency.setValueAtTime(frequency * 2, when);
+      shimmerLevel.gain.value = .16;
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(2800, when);
+      filter.frequency.exponentialRampToValueAtTime(1300, when + duration);
+      gain.gain.setValueAtTime(.0001, when);
+      gain.gain.exponentialRampToValueAtTime(volume, when + .018);
+      gain.gain.exponentialRampToValueAtTime(.0001, when + duration);
+
+      body.connect(filter);
+      shimmer.connect(shimmerLevel).connect(filter);
+      filter.connect(gain).connect(musicBus);
+      body.start(when);
+      shimmer.start(when);
+      body.stop(when + duration + .03);
+      shimmer.stop(when + duration + .03);
+    }
+
     function scheduleWarmMusic() {
       if (!musicPlaying || !audioContext) return;
-      const beat = 60 / 72;
+      const stepDuration = 60 / 94 / 2;
+      const arpeggioPattern = [0, 2, 1, 2, 0, 3];
 
       while (nextMusicTime < audioContext.currentTime + .8) {
-        const chordIndex = Math.floor(musicStep / 4) % warmChords.length;
-        const chord = warmChords[chordIndex];
+        const chordIndex = Math.floor(musicStep / 6) % brightChords.length;
+        const chord = brightChords[chordIndex];
+        const positionInBar = musicStep % 6;
 
-        if (musicStep % 4 === 0) {
+        if (positionInBar === 0) {
           chord.forEach((frequency, index) => {
-            softTone(frequency, nextMusicTime + index * .035, beat * 4.45, .012, 'sine');
+            softTone(frequency, nextMusicTime + index * .025, stepDuration * 6.4, .0085, 'sine');
           });
         }
 
-        const arpeggio = chord[musicStep % chord.length] * 2;
-        softTone(arpeggio, nextMusicTime, beat * .72, .017, 'triangle');
+        const arpeggio = chord[arpeggioPattern[positionInBar]] * 2;
+        pluckTone(arpeggio, nextMusicTime, stepDuration * .82, positionInBar % 3 === 0 ? .029 : .022);
 
-        const melodyNote = warmMelody[musicStep % warmMelody.length];
-        if (melodyNote) softTone(melodyNote, nextMusicTime + .08, beat * .82, .023, 'sine');
+        if (positionInBar % 3 === 0) {
+          softTone(chord[0], nextMusicTime, stepDuration * 2.55, .014, 'sine');
+        }
 
-        nextMusicTime += beat;
+        const melodyNote = brightMelody[musicStep % brightMelody.length];
+        if (melodyNote) pluckTone(melodyNote, nextMusicTime + .035, stepDuration * 1.65, .032);
+
+        nextMusicTime += stepDuration;
         musicStep++;
       }
     }
@@ -1090,7 +1137,7 @@
       musicControl.classList.toggle('playing', musicPlaying);
       musicControl.setAttribute('aria-pressed', String(musicPlaying));
       musicControl.setAttribute('aria-label', musicPlaying ? '暂停背景音乐' : '开启背景音乐');
-      musicLabel.textContent = musicPlaying ? '音乐播放中' : '开启音乐';
+      musicLabel.textContent = musicPlaying ? '轻快音乐中' : '开启音乐';
     }
 
     function startMusic() {
@@ -1101,7 +1148,7 @@
       nextMusicTime = engine.currentTime + .05;
       musicBus.gain.cancelScheduledValues(engine.currentTime);
       musicBus.gain.setValueAtTime(musicBus.gain.value, engine.currentTime);
-      musicBus.gain.linearRampToValueAtTime(.78, engine.currentTime + .8);
+      musicBus.gain.linearRampToValueAtTime(.68, engine.currentTime + .55);
       scheduleWarmMusic();
       musicTimer = setInterval(scheduleWarmMusic, 240);
       updateMusicControl();
